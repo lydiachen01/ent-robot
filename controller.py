@@ -1,21 +1,19 @@
-import serial
+import requests
 from pynput import keyboard
 
-print("Connecting to ESP32...")
-ser = serial.Serial('COM5', 115200)
-print(f"Connected on {ser.name}")
+ESP32_IP = 'http://10.243.87.230'
 
 pressed = set()
 
 KEY_MAP = {
-    'w': b'f',
-    's': b'b',
-    'a': b'l',
-    'd': b'r',
-    keyboard.Key.up: b'f',
-    keyboard.Key.down: b'b',
-    keyboard.Key.left: b'l',
-    keyboard.Key.right: b'r',
+    'w': 'f',
+    's': 'b',
+    'a': 'l',
+    'd': 'r',
+    keyboard.Key.up: 'f',
+    keyboard.Key.down: 'b',
+    keyboard.Key.left: 'l',
+    keyboard.Key.right: 'r',
 }
 
 PRIORITY = ['w', 's', 'a', 'd',
@@ -32,10 +30,10 @@ def send_current():
     for k in PRIORITY:
         if k in pressed:
             print(f"Sending: {KEY_MAP[k]}")
-            ser.write(KEY_MAP[k])
+            requests.get(f"{ESP32_IP}/cmd/{KEY_MAP[k]}")
             return
     print("Sending: stop")
-    ser.write(b's')
+    requests.get(f"{ESP32_IP}/cmd/s")
 
 def on_press(key):
     print(f"Key pressed: {key}")
@@ -47,9 +45,6 @@ def on_release(key):
     pressed.discard(get_key_id(key))
     send_current()
     if key == keyboard.Key.esc:
-        print("Exiting...")
-        ser.write(b's')
-        ser.close()
         return False
 
 print("Listening for keypresses. Press ESC to quit.")
