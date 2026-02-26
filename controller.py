@@ -31,10 +31,10 @@ def get_key_id(key):
 def send_current():
     for k in PRIORITY:
         if k in pressed:
-            print(f"Sending command: {KEY_MAP[k]}")
+            print(f"Sending: {KEY_MAP[k]}")
             ser.write(KEY_MAP[k])
             return
-    print("No keys held, sending stop")
+    print("Sending: stop")
     ser.write(b's')
 
 def on_press(key):
@@ -48,6 +48,8 @@ def on_release(key):
     send_current()
     if key == keyboard.Key.esc:
         print("Exiting...")
+        ser.write(b's')
+        ser.close()
         return False
 
 print("Listening for keypresses. Press ESC to quit.")
