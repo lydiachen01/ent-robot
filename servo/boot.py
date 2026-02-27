@@ -159,8 +159,6 @@ HTML = """<!DOCTYPE html>
   <button class="preset-btn" onclick="setAngle(0)">0°</button>
   <button class="preset-btn" onclick="setAngle(45)">45°</button>
   <button class="preset-btn" onclick="setAngle(90)">90°</button>
-  <button class="preset-btn" onclick="setAngle(135)">135°</button>
-  <button class="preset-btn" onclick="setAngle(180)">180°</button>
 </div>
 
 <div class="status" id="status">READY</div>
