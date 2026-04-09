@@ -1,0 +1,165 @@
+import network
+import socket
+from machine import Pin, PWM, SoftI2C
+
+print("Connecting to WiFi...")
+wlan = network.WLAN(network.STA_IF)
+wlan.active(True)
+wlan.connect('Tufts_Wireless')
+
+while not wlan.isconnected():
+    pass
+
+ip = wlan.ifconfig()[0]
+print("WiFi connected! IP:", ip)
+print("Starting Reciprocal servo server...")
+
+# --- I2C LCD1602 (PCF8574 backpack) ---
+# Wiring: SDA -> GPIO21, SCL -> GPIO22  (default I2C pins on ESP32)
+# Adjust sda/scl pins below if yours differ
+i2c = SoftI2C(sda=Pin(25), scl=Pin(27), freq=400000)
+
+LCD_ADDR = 0x27   # try 0x3F if display stays blank
+
+# LCD constants
+LCD_CHR = 1
+LCD_CMD = 0
+LCD_LINE_1 = 0x80
+LCD_LINE_2 = 0xC0
+LCD_BACKLIGHT = 0x08
+ENABLE = 0b00000100
+
+import time
+
+def lcd_byte(bits, mode):
+    bits_high = mode | (bits & 0xF0) | LCD_BACKLIGHT
+    bits_low  = mode | ((bits << 4) & 0xF0) | LCD_BACKLIGHT
+    i2c.writeto(LCD_ADDR, bytes([bits_high]))
+    lcd_toggle_enable(bits_high)
+    i2c.writeto(LCD_ADDR, bytes([bits_low]))
+    lcd_toggle_enable(bits_low)
+
+def lcd_toggle_enable(bits):
+    i2c.writeto(LCD_ADDR, bytes([bits | ENABLE]))
+    time.sleep_us(500)
+    i2c.writeto(LCD_ADDR, bytes([bits & ~ENABLE]))
+    time.sleep_us(500)
+
+def lcd_init():
+    for cmd in [0x33, 0x32, 0x06, 0x0C, 0x28, 0x01]:
+        lcd_byte(cmd, LCD_CMD)
+        time.sleep_ms(5)
+
+def lcd_clear():
+    lcd_byte(0x01, LCD_CMD)
+    time.sleep_ms(5)
+
+def lcd_string(message, line):
+    message = (message + '                ')[:16]  # pad with spaces, trim to 16
+    lcd_byte(line, LCD_CMD)
+    for char in message:
+        lcd_byte(ord(char), LCD_CHR)
+
+lcd_init()
+lcd_clear()
+lcd_string("Reciprocal", LCD_LINE_1)
+lcd_string("Connecting WiFi", LCD_LINE_2)
+
+# Show IP on LCD once connected
+lcd_clear()
+lcd_string("Rec2 Ready", LCD_LINE_1)
+lcd_string(ip, LCD_LINE_2)
+
+# --- Servo ---
+servo_pin = PWM(Pin(13), freq=50)
+last_angle = 0
+message_log = []  # keep last 5 messages
+
+def set_angle(angle):
+    global last_angle
+    min_duty = 26
+    max_duty = 128
+    duty = int(min_duty + (angle / 180) * (max_duty - min_duty))
+    servo_pin.duty(duty)
+    last_angle = angle
+    entry = 'Message received! Servo moved to ' + str(angle) + 'deg'
+    print(entry)
+    message_log.append(entry)
+    if len(message_log) > 5:
+        message_log.pop(0)
+
+set_angle(0)  # Reciprocal starts at 0deg
+
+def build_page():
+    log_items = ''.join('<li>' + m + '</li>' for m in reversed(message_log)) or '<li>No messages yet</li>'
+    return """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="2">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reciprocal Status</title>
+<style>
+  body { background: #0a0a0a; color: #00ff88; font-family: 'Courier New', monospace;
+         display: flex; flex-direction: column; align-items: center;
+         justify-content: center; min-height: 100vh; gap: 24px; margin: 0; }
+  h1 { font-size: 1rem; letter-spacing: 0.3em; opacity: 0.8; }
+  .card { border: 1px solid #00ff8822; border-radius: 12px; background: #0d0d0d;
+          padding: 24px 36px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .angle { font-size: 3rem; text-shadow: 0 0 20px #00ff8888; }
+  .label { font-size: 0.65rem; letter-spacing: 0.3em; opacity: 0.5; text-transform: uppercase; }
+  ul { list-style: none; padding: 0; margin: 0; width: 100%; }
+  li { font-size: 0.8rem; padding: 8px 0; border-bottom: 1px solid #00ff8811;
+       letter-spacing: 0.05em; color: #00ff88cc; }
+  li:first-child { color: #00ff88; font-weight: bold; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #00ff88;
+         box-shadow: 0 0 10px #00ff88; display: inline-block; margin-right: 8px; }
+  .refresh { font-size: 0.6rem; opacity: 0.3; letter-spacing: 0.2em; }
+</style>
+</head>
+<body>
+<h1>&#9632; Reciprocal Status</h1>
+<div class="card">
+  <div class="label">Current Servo Angle</div>
+  <div class="angle">""" + str(last_angle) + """<span style="font-size:1.2rem;opacity:0.5">deg</span></div>
+</div>
+<div class="card" style="min-width:300px">
+  <div class="label"><span class="dot"></span>Message Log</div>
+  <ul>""" + log_items + """</ul>
+</div>
+<div class="refresh">auto-refreshes every 2s</div>
+</body>
+</html>"""
+
+# --- Web Server ---
+addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(addr)
+s.listen(5)
+print("Reciprocal no. 2 web server running on port 80...")
+
+while True:
+    conn, _ = s.accept()
+    request = conn.recv(1024).decode()
+
+    if 'GET /angle/' in request:
+        try:
+            angle = int(request.split('GET /angle/')[1].split(' ')[0])
+            angle = max(0, min(180, angle))
+            set_angle(angle)
+        except:
+            pass
+        conn.send('HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\n\r\nOK')
+
+    elif 'GET /' in request:
+        page = build_page()
+        conn.send('HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n' + page)
+
+    conn.close()
+
+    # Refresh LCD after every request in case it lost state
+    lcd_init()
+    lcd_clear()
+    lcd_string("Rec2 Ready", LCD_LINE_1)
+    lcd_string(ip, LCD_LINE_2)
